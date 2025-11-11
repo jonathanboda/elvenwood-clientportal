@@ -1,0 +1,212 @@
+// Supabase Edge Function: /functions/invite
+// Deploy with: supabase functions deploy invite
+// This function handles sending magic link invites to clients
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+interface InviteRequest {
+  projectId: string;
+  invitedEmail: string;
+  invitedName: string;
+}
+
+interface InviteResponse {
+  success: boolean;
+  message: string;
+  data?: {
+    inviteId: string;
+    inviteToken: string;
+  };
+  error?: string;
+}
+
+// Generate a secure random token
+function generateToken(length: number = 32): string {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let token = "";
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  for (let i = 0; i < length; i++) {
+    token += chars[array[i] % chars.length];
+  }
+  return token;
+}
+
+Deno.serve(async (req: Request): Promise<Response> => {
+  // Handle CORS
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }
+
+  try {
+    // Get authorization header
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Missing authorization header",
+        }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Initialize Supabase client with service role
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Get request body
+    const body: InviteRequest = await req.json();
+    const { projectId, invitedEmail, invitedName } = body;
+
+    // Validate input
+    if (!projectId || !invitedEmail || !invitedName) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Missing required fields: projectId, invitedEmail, invitedName",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Extract user ID from JWT token
+    const token = authHeader.replace("Bearer ", "");
+    const jwtPayload = JSON.parse(atob(token.split(".")[1]));
+    const userId = jwtPayload.sub;
+
+    // Verify user is a designer and owns the project
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("id, designer_id")
+      .eq("id", projectId)
+      .single();
+
+    if (projectError || !project || project.designer_id !== userId) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Unauthorized: You do not own this project",
+        }),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Generate invite token
+    const inviteToken = generateToken();
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 48); // 48-hour expiry
+
+    // Create invite record
+    const { data: invite, error: inviteError } = await supabase
+      .from("invites")
+      .insert({
+        project_id: projectId,
+        designer_id: userId,
+        invited_email: invitedEmail.toLowerCase(),
+        invited_name: invitedName,
+        token: inviteToken,
+        expires_at: expiresAt.toISOString(),
+        status: "pending",
+      })
+      .select()
+      .single();
+
+    if (inviteError) {
+      console.error("Error creating invite:", inviteError);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Failed to create invite",
+          details: inviteError.message,
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Generate magic link with invite token
+    const appUrl = Deno.env.get("APP_URL") || "http://localhost:3000";
+    const inviteLink = `${appUrl}/accept-invite?token=${inviteToken}`;
+
+    // Send email via Supabase Auth (using email verification template)
+    // Note: You need to configure email templates in Supabase
+    const { error: emailError } = await supabase.auth.admin.createUser({
+      email: invitedEmail.toLowerCase(),
+      email_confirm: false,
+      user_metadata: {
+        invited_name: invitedName,
+        project_id: projectId,
+        invite_token: inviteToken,
+      },
+    });
+
+    // Email is optional - if user already exists, we just use the invite token
+    if (emailError && !emailError.message.includes("already exists")) {
+      console.warn("Email creation warning:", emailError);
+    }
+
+    // Log audit event
+    await supabase.from("audit_logs").insert({
+      user_id: userId,
+      action: "INVITE_SENT",
+      resource_type: "invite",
+      resource_id: invite.id,
+      changes: {
+        invited_email: invitedEmail,
+        invited_name: invitedName,
+        project_id: projectId,
+      },
+    });
+
+    // Return success response
+    const response: InviteResponse = {
+      success: true,
+      message: `Invite sent to ${invitedEmail}`,
+      data: {
+        inviteId: invite.id,
+        inviteToken: inviteToken,
+      },
+    };
+
+    return new Response(JSON.stringify(response), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Internal server error",
+        details: String(error),
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+});

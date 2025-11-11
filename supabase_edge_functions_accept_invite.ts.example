@@ -1,0 +1,293 @@
+// Supabase Edge Function: /functions/acceptInvite
+// Deploy with: supabase functions deploy acceptInvite
+// This function handles accepting an invite and linking a client to a project
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+interface AcceptInviteRequest {
+  token: string;
+  userId?: string; // Optional - will use auth.uid() if not provided
+}
+
+interface AcceptInviteResponse {
+  success: boolean;
+  message: string;
+  data?: {
+    projectId: string;
+    projectName: string;
+    designerName: string;
+  };
+  error?: string;
+}
+
+Deno.serve(async (req: Request): Promise<Response> => {
+  // Handle CORS
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }
+
+  try {
+    // Get authorization header
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Missing authorization header",
+        }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Initialize Supabase client with service role
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Get request body
+    const body: AcceptInviteRequest = await req.json();
+    const { token } = body;
+
+    // Validate input
+    if (!token) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Missing required field: token",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Extract user ID from JWT token
+    const jwtToken = authHeader.replace("Bearer ", "");
+    const jwtPayload = JSON.parse(atob(jwtToken.split(".")[1]));
+    const userId = jwtPayload.sub;
+    const userEmail = jwtPayload.email;
+
+    // Find the invite by token
+    const { data: invite, error: inviteError } = await supabase
+      .from("invites")
+      .select("id, project_id, invited_email, status, expires_at, designer_id")
+      .eq("token", token)
+      .single();
+
+    if (inviteError || !invite) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Invalid or expired invite token",
+        }),
+        {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Check if invite is already accepted or expired
+    if (invite.status !== "pending") {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Invite is already ${invite.status}`,
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Check if invite has expired
+    if (new Date(invite.expires_at) < new Date()) {
+      // Mark as expired
+      await supabase
+        .from("invites")
+        .update({ status: "expired" })
+        .eq("id", invite.id);
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Invite has expired",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Verify email matches (optional - for security)
+    // Uncomment if you want strict email matching:
+    // if (invite.invited_email !== userEmail.toLowerCase()) {
+    //   return new Response(
+    //     JSON.stringify({
+    //       success: false,
+    //       error: "Email does not match invite",
+    //     }),
+    //     {
+    //       status: 403,
+    //       headers: { "Content-Type": "application/json" },
+    //     }
+    //   );
+    // }
+
+    // Get project details
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("id, project_name, designer_id")
+      .eq("id", invite.project_id)
+      .single();
+
+    if (projectError || !project) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Project not found",
+        }),
+        {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Get designer details
+    const { data: designer, error: designerError } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .eq("id", project.designer_id)
+      .single();
+
+    if (designerError || !designer) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Designer not found",
+        }),
+        {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Update invite status to accepted
+    const { error: updateInviteError } = await supabase
+      .from("invites")
+      .update({
+        status: "accepted",
+        accepted_at: new Date().toISOString(),
+      })
+      .eq("id", invite.id);
+
+    if (updateInviteError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Failed to accept invite",
+          details: updateInviteError.message,
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Link client to project (update project with client_id)
+    const { error: updateProjectError } = await supabase
+      .from("projects")
+      .update({
+        client_id: userId,
+        client_email: userEmail || invite.invited_email,
+      })
+      .eq("id", invite.project_id);
+
+    if (updateProjectError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Failed to link client to project",
+          details: updateProjectError.message,
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Ensure user has client role
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (!profileError && profile && profile.role === "client") {
+      // Profile exists and is already a client, no update needed
+    } else if (!profileError && profile) {
+      // Update role to client if not already
+      await supabase.from("profiles").update({ role: "client" }).eq("id", userId);
+    }
+
+    // Log audit event
+    await supabase.from("audit_logs").insert({
+      user_id: userId,
+      action: "INVITE_ACCEPTED",
+      resource_type: "invite",
+      resource_id: invite.id,
+      changes: {
+        project_id: invite.project_id,
+        client_id: userId,
+      },
+    });
+
+    // Return success response
+    const response: AcceptInviteResponse = {
+      success: true,
+      message: `Successfully accepted invite for project: ${project.project_name}`,
+      data: {
+        projectId: project.id,
+        projectName: project.project_name,
+        designerName: designer.full_name || "Designer",
+      },
+    };
+
+    return new Response(JSON.stringify(response), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Internal server error",
+        details: String(error),
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+});

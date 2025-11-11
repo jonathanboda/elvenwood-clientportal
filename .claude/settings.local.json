@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s \"C:\\Users\\Jonathan\\Documents\\clientportal\")",
+      "Bash(findstr:*)",
+      "mcp__vercel-awesome-ai__list_projects",
+      "Bash(dir:*)",
+      "Bash(cmd /c dir /b)",
+      "Bash(vercel --version:*)",
+      "Bash(npm i:*)",
+      "Bash(vercel)",
+      "Bash(vercel login)",
+      "Bash(vercel --yes:*)",
+      "Bash(vercel env add:*)",
+      "Bash(vercel env pull:*)",
+      "Bash(cmd /c add-env-vars.bat:*)",
+      "mcp__vercel-awesome-ai__search_vercel_documentation",
+      "WebSearch",
+      "Bash(bash add-vercel-env.sh:*)",
+      "Bash(vercel --prod --yes:*)",
+      "Bash(vercel inspect:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

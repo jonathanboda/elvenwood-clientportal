@@ -1,0 +1,5 @@
+{
+  "name": "Elvenwood Interiors Portal",
+  "description": "A two-portal web application for Elvenwood Interiors that connects interior design clients and designers. Clients can view projects, give feedback, and approve designs, while designers can manage versions, respond to feedback, and track progress.",
+  "requestFramePermissions": []
+}

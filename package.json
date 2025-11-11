@@ -1,0 +1,46 @@
+{
+  "name": "elvenwood-design",
+  "version": "2.0.0",
+  "description": "Elvenwood Interior Design - Advanced Client-Designer Collaboration Portal",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^5.0.0",
+    "@dnd-kit/sortable": "^6.0.0",
+    "@dnd-kit/utilities": "^3.2.0",
+    "@emotion/cache": "^11.11.0",
+    "@emotion/react": "^11.11.0",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.13.0",
+    "@mui/material": "^5.13.0",
+    "@react-pdf/renderer": "^4.2.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "chart.js": "^4.4.0",
+    "framer-motion": "^10.16.0",
+    "lucide-react": "^0.553.0",
+    "next": "^15.0.0",
+    "react": "^18.3.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-dom": "^18.3.0",
+    "resend": "^6.4.2",
+    "zustand": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/chart.js": "^2.9.41",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^8.54.0",
+    "eslint-config-next": "^15.0.0",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3"
+  }
+}

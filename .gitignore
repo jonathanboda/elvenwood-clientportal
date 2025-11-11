@@ -1,0 +1,71 @@
+# Environment Variables (NEVER COMMIT)
+.env
+.env.local
+.env.*.local
+.env.production.local
+
+# MCP Configuration (contains API keys)
+anthropic.json
+
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+coverage/
+.nyc_output/
+
+# Production
+/build
+/dist
+/.next
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Misc
+.DS_Store
+*.pem
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Supabase
+.supabase/
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Local development
+.env.local.bak
+.env.local.old
+secrets.json
+
+# Vite/Webpack
+dist-ssr
+*.local
+
+.vercel
+
+# Temporary scripts with sensitive data
+add-env-vars.bat
+add-vercel-env.sh
+temp_env.txt
+nul
+.env.production
