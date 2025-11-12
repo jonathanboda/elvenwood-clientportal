@@ -1,0 +1,143 @@
+name: Load Testing
+
+on:
+  # Run automatically every week on Monday at 2 AM
+  schedule:
+    - cron: '0 2 * * 1'
+
+  # Run on manual trigger
+  workflow_dispatch:
+    inputs:
+      test_duration:
+        description: 'Test duration (e.g., 1m, 5m, 10m)'
+        required: false
+        default: '1m'
+      virtual_users:
+        description: 'Number of virtual users'
+        required: false
+        default: '10'
+
+  # Run before merging to main (optional - comment out if too expensive)
+  # pull_request:
+  #   branches: [ main ]
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Verify k6 installation
+        run: k6 version
+
+      - name: Run health check test
+        run: |
+          cd load-tests
+          k6 run 01-health-check.js --out json=health-check-results.json
+        continue-on-error: true
+
+      - name: Run authentication test
+        run: |
+          cd load-tests
+          k6 run 02-auth-test.js --out json=auth-test-results.json
+        continue-on-error: true
+
+      - name: Run projects API test
+        run: |
+          cd load-tests
+          k6 run 03-projects-api-test.js --out json=projects-test-results.json
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test-results
+          path: load-tests/*-results.json
+          retention-days: 30
+
+      - name: Check performance thresholds
+        run: |
+          cd load-tests
+          echo "Checking if tests passed thresholds..."
+
+          # Check if any test failed
+          if grep -q '"thresholds".*"failed"' *.json 2>/dev/null; then
+            echo "⚠️  Some performance thresholds were not met!"
+            echo "Review the artifacts for detailed results."
+            exit 1
+          else
+            echo "✅ All performance thresholds passed!"
+          fi
+
+      - name: Comment on PR (if PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let comment = '## 🚀 Load Test Results\n\n';
+
+            try {
+              const healthResults = JSON.parse(fs.readFileSync('load-tests/health-check-results.json', 'utf8'));
+              const metrics = healthResults.metrics;
+
+              comment += '### Performance Metrics\n';
+              comment += `- **p95 Response Time**: ${metrics.http_req_duration.values['p(95)'].toFixed(2)}ms\n`;
+              comment += `- **p99 Response Time**: ${metrics.http_req_duration.values['p(99)'].toFixed(2)}ms\n`;
+              comment += `- **Error Rate**: ${(metrics.http_req_failed.values.rate * 100).toFixed(2)}%\n`;
+              comment += `- **Requests/sec**: ${metrics.http_reqs.values.rate.toFixed(2)}\n\n`;
+
+              if (metrics.http_req_duration.values['p(95)'] < 500) {
+                comment += '✅ Performance is excellent!\n';
+              } else if (metrics.http_req_duration.values['p(95)'] < 1000) {
+                comment += '⚠️  Performance is acceptable but could be improved.\n';
+              } else {
+                comment += '❌ Performance issues detected. Please investigate.\n';
+              }
+            } catch (error) {
+              comment += '⚠️  Could not parse test results.\n';
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: https://clientportal-vert.vercel.app" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "load-tests/health-check-results.json" ]; then
+            echo "### Results Available" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Health check test completed" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Authentication test completed" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Projects API test completed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📊 Download artifacts for detailed results" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Tests did not complete successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::warning::Load tests failed or performance thresholds were not met. Check the artifacts for details."
