@@ -1,28 +1,10 @@
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-
-// Create a Supabase admin client using service role key
-function createSupabaseAdminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error('Missing Supabase credentials');
-  }
-
-  return createSupabaseClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-}
+import { supabaseServer, getAuthUser } from '@/lib/supabase-server';
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createSupabaseAdminClient();
-
-    const { data, error } = await supabase
+    // Using optimized server client with connection pooling
+    const { data, error } = await supabaseServer
       .from('projects')
       .select('*')
       .order('created_at', { ascending: false });
@@ -43,21 +25,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createSupabaseAdminClient();
-
-    // Get the authorization header
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader) {
-      return NextResponse.json(
-        { error: 'Unauthorized - please sign in' },
-        { status: 401 }
-      );
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-
-    // Get the authenticated user from the token
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    // Using optimized auth helper
+    const { user, error: authError } = await getAuthUser(request);
 
     if (authError || !user) {
       console.error('Auth error:', authError);
@@ -68,7 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Ensure user has a profile (create if missing)
-    const { data: profile, error: profileCheckError } = await supabase
+    const { data: profile, error: profileCheckError } = await supabaseServer
       .from('profiles')
       .select('id')
       .eq('id', user.id)
@@ -76,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     if (profileCheckError || !profile) {
       // Create missing profile
-      const { error: createProfileError } = await supabase
+      const { error: createProfileError } = await supabaseServer
         .from('profiles')
         .insert([{
           id: user.id,
@@ -125,7 +94,8 @@ export async function POST(request: NextRequest) {
     // Note: start_date and end_date columns don't exist in the actual database schema
     // Only include date fields if the API explicitly supports them
 
-    const { data, error } = await supabase
+    // Using optimized server client with connection pooling
+    const { data, error } = await supabaseServer
       .from('projects')
       .insert([insertData])
       .select();
